@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SISTEMA RPS - Interface Autoritaire</title>
+    <style>
+        :root {
+            --bg: #0a0b10;
+            --panel: #12151e;
+            --red: #ff2a4b;
+            --green: #00ffaa;
+            --yellow: #ffb700;
+            --text: #d8e0ed;
+            --font: 'Courier New', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: var(--bg); color: var(--text); font-family: var(--font); padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 20px; }
+        
+
+        .status-card { background: var(--panel); border: 1px solid #242938; padding: 15px; border-radius: 6px; text-align: center; }
+        #game-status { font-size: 1.4rem; color: var(--yellow); font-weight: bold; }
+
+
+        .scoreboard { display: grid; grid-template-columns: 1fr auto 1fr; gap: 20px; background: var(--panel); border: 1px solid #242938; padding: 20px; border-radius: 6px; text-align: center; }
+        .score { font-size: 3.5rem; font-weight: bold; }
+        .player-score { color: var(--green); }
+        .robot-score { color: var(--red); }
+
+
+        #countdown-display { font-size: 5rem; color: var(--red); text-align: center; min-height: 80px; }
+
+
+        .history-box { background: #07080c; border-left: 4px solid var(--red); padding: 15px; height: 250px; overflow-y: auto; display: flex; flex-direction: column-reverse; gap: 10px; }
+        .log-entry { font-size: 0.95rem; line-height: 1.4; border-bottom: 1px dashed #222; padding-bottom: 8px; }
+        .log-time { color: #666; font-size: 0.8rem; }
+
+
+        .controls { display: flex; justify-content: center; }
+        .btn-start { background: var(--red); color: #000; font-weight: bold; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 4px; font-family: inherit; }
+        .btn-start:hover { box-shadow: 0 0 15px var(--red); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status-card">
+            <div id="game-status">EN ATTENTE D'INITIALISATION</div>
+        </div>
+
+        <div class="scoreboard">
+            <div>
+                <h3>JOUEUR</h3>
+                <div id="player-score" class="score player-score">0</div>
+            </div>
+            <div style="font-size: 2rem; align-self: center;">VS</div>
+            <div>
+                <h3>ROBOT IA</h3>
+                <div id="robot-score" class="score robot-score">0</div>
+            </div>
+        </div>
+
+        <div id="countdown-display"></div>
+
+        <div class="history-box" id="history">
+            <div class="log-entry">Système prêt. L'IA observe.</div>
+        </div>
+
+        <div class="controls">
+            <button class="btn-start" onclick="triggerStart()">LANCER LA MANCHE</button>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        const elStatus = document.getElementById('game-status');
+        const elPlayerScore = document.getElementById('player-score');
+        const elRobotScore = document.getElementById('robot-score');
+        const elCountdown = document.getElementById('countdown-display');
+        const elHistory = document.getElementById('history');
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            
+            switch(msg.type) {
+                case 'STATUS_UPDATE':
+                    elStatus.textContent = msg.status;
+                    break;
+                    
+                case 'COUNTDOWN':
+                    elCountdown.textContent = msg.val > 0 ? msg.val : 'GO !';
+                    if(msg.val === 0) setTimeout(() => elCountdown.textContent = '', 1000);
+                    break;
+
+                case 'ROUND_RESULT':
+                    elPlayerScore.textContent = msg.playerScore;
+                    elRobotScore.textContent = msg.robotScore;
+                    addLogEntry(msg.dialogue);
+                    break;
+
+                case 'GAME_OVER':
+                    elStatus.textContent = "BANNISSEMENT SYSTÈME DÉCLENCHÉ";
+                    alert(msg.reason);
+                    break;
+            }
+        };
+
+        function addLogEntry(text) {
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">[${time}] IA:</span> ${text}`;
+            elHistory.prepend(entry);
+        }
+
+        function triggerStart() {
+            ws.send(JSON.stringify({ type: 'START_ROUND' }));
+        }
+    </script>
+</body>
+</html>
