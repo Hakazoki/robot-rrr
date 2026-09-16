@@ -1,8 +1,10 @@
 import cv2
 import math
+import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 import mediapipe as mp
@@ -10,10 +12,11 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import numpy as np
 
-# Config réseau
+# Config réseau et chemins
 ROBOT_IP: str = "192.168.0.150"
 STREAM_URL: str = f"http://{ROBOT_IP}:8080/?action=stream"
-MODEL_PATH: str = "hand_landmarker.task"
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH: str = str(BASE_DIR / "hand_landmarker.task")
 
 # Topologie des os de la main
 HAND_CONNECTIONS: List[Tuple[int, int]] = [
@@ -115,7 +118,7 @@ def classify_gesture_advanced(landmarks: List[Any]) -> str:
     if opened_fingers_count >= 3:
         return "PAPER"
 
-    # 4. MIDDLE FINGER : le middle finger ouvert et c'est tout bro
+    # 4. MIDDLE FINGER : le middle finger ouvert
     if middle_open and not index_open and not ring_open and not pinky_open:
         return "FUCK"
 
@@ -136,12 +139,15 @@ def draw_landmarks_on_image(image: np.ndarray, landmarks: List[Any]) -> np.ndarr
 
     return image
 
+
 class VisionService:
+
     def __init__(self, stream_url: str = STREAM_URL, model_path: str = MODEL_PATH):
         self.stream_url = stream_url
         self.model_path = model_path
         self.running = False
         self.current_gesture = "AUCUNE MAIN"
+        self.current_frame: Optional[np.ndarray] = None  
         self.stabilizer = GestureStabilizer(window_size=7)
         self._thread: Optional[threading.Thread] = None
 
@@ -169,6 +175,8 @@ class VisionService:
                     time.sleep(0.01)
                     continue
 
+                annotated_frame = frame.copy()
+
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
                 detection_result = detector.detect(mp_image)
@@ -177,7 +185,10 @@ class VisionService:
                 if detection_result.hand_landmarks:
                     landmarks = detection_result.hand_landmarks[0]
                     raw_gesture = classify_gesture_advanced(landmarks)
+                    annotated_frame = draw_landmarks_on_image(annotated_frame, landmarks)
 
+                # Mise à jour de l'image diffusée (avec squelette vert)
+                self.current_frame = annotated_frame
                 self.current_gesture = self.stabilizer.update(raw_gesture)
                 time.sleep(0.01)
         finally:
@@ -191,6 +202,14 @@ class VisionService:
         self.running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
+
+    def get_frame_bytes(self) -> Optional[bytes]:
+        if self.current_frame is not None:
+            ret, buffer = cv2.imencode('.jpg', self.current_frame)
+            if ret:
+                return buffer.tobytes()
+        return None
+
 
 if __name__ == "__main__":
     print("Démarrage du test autonome du VisionService...")

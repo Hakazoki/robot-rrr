@@ -38,6 +38,21 @@
         .btn-start { background: var(--red); color: #000; font-weight: bold; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 4px; font-family: inherit; }
         .btn-start:hover { box-shadow: 0 0 15px var(--red); }
         .btn-start:disabled { background: #444; cursor: not-allowed; box-shadow: none; }
+
+        .dev-btn {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: transparent;
+            border: 1px solid #333;
+            color: #555;
+            font-size: 0.7rem;
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 3px;
+            opacity: 0.4;
+        }
+        .dev-btn:hover { opacity: 1.0; color: #ff4444; border-color: #ff4444; }
     </style>
 </head>
 <body>
@@ -125,6 +140,15 @@
             btnStart.disabled = true;
             ws.send(JSON.stringify({ type: 'START_ROUND' }));
         }
+
+        function openDevCam() {
+            window.open(
+                '/video_feed', 
+                'Caméra Dev - Fonzi', 
+                'width=640,height=480,menubar=no,toolbar=no,location=no,status=no,resizable=yes'
+            );
+        }
     </script>
+    <button class="dev-btn" onclick="openDevCam()">DEV CAM</button>
 </body>
 </html>
