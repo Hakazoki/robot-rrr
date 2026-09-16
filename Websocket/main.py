@@ -1,14 +1,13 @@
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from typing import List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-
 from orchestrator import run_game_round, vision_service
-
 
 
 @asynccontextmanager
@@ -23,7 +22,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-
 
 
 class ConnectionManager:
@@ -58,7 +56,25 @@ async def get_index():
     return FileResponse("static/index.html")
 
 
+# --- ROUTE DU FLUX VIDÉO DEV MODE (AJOUTÉE) ---
+def gen_frames():
+    while True:
+        frame_bytes = vision_service.get_frame_bytes()
+        if frame_bytes:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.04)
 
+
+@app.get("/video_feed")
+async def video_feed():
+    return StreamingResponse(
+        gen_frames(), 
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+# --- WEBSOCKET DU JEU ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
