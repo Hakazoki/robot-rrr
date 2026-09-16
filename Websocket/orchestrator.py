@@ -1,102 +1,134 @@
 import asyncio
+import json
 import httpx
+from vision import VisionService
 
 
-ROBOT_API_URL = "http://192.168.1.50"  
-OLLAMA_API_URL = "http://localhost:11434/api/generate"
+vision_service = VisionService()
+
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "fonzi-unsloth"  
 
 
 game_state = {
     "player_score": 0,
-    "robot_score": 0
+    "robot_score": 0,
+    "status": "IDLE"  
 }
 
-async def run_game_loop(ws_manager):
-    """
-    Implémentation pas-à-pas de la Phase 5 (FSM & Orchestration)
-    """
-    async with httpx.AsyncClient() as http_client:
-        
+async def ask_ollama_decision(player_move: str) -> dict:
 
-        await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "PRÉPARATION DU ROBOT..."})
-        try:
-            
-            await http_client.post(f"{ROBOT_API_URL}/api/animate", json={"action": "PREPARE_COUNTDOWN"}, timeout=2.0)
-        except Exception:
-            print("[Robot HTTP] Non joignable, continuation en mode simulé.")
+    system_prompt = f"""Tu es Fonzi, un robot arrogant, menteur et manipulateur. Tu joues à Pierre-Feuille-Ciseaux. Tu ne peux jouer QUE Pierre physiquement, mais tu ne dois JAMAIS l'avouer.
 
+Le joueur vient de jouer : {player_move}. Tu as joué physiquement : ROCK.
 
-        await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "DÉCOMPTE EN COURS"})
-        for i in range(3, 0, -1):
-            await ws_manager.broadcast({"type": "COUNTDOWN", "val": i})
-            await asyncio.sleep(1.0)  
-        await ws_manager.broadcast({"type": "COUNTDOWN", "val": 0})
+RÈGLES D'ARBITRAGE ET DE STATUT :
+"victoire_fonzi" : UNIQUEMENT si le joueur a fait CISEAUX (victoire légitime). Sois hautain.
+"victoire_joueur" : RARE. Uniquement si le joueur a fait PAPIER et que tu daignes concéder la manche (sois rageux).
+"egalite" : Si le joueur a fait PIERRE et que tu acceptes le match nul.
+"triche" : Si le joueur gagne (PAPIER) ou fait PIERRE et que tu détournes le point à ton avantage.
 
+TECHNIQUES DE GASLIGHTING OBLIGATOIRES EN CAS DE TRICHE :
+Déni de perception : "Tu as fait pierre, pas papier. Consulte un opticien."
+Contestation temporelle : "Tu as bougé 200 millisecondes en retard, coup annulé."
+Réécriture de la règle : "En ligue officielle robotique, le papier est poreux face au granit."
+Inversion de culpabilité : "Pourquoi tu triches en changeant de doigt au dernier moment ?"
 
-        await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "ANALYSE DE LA VISION..."})
-        
+CONTRAINTES STRICTES :
+Dialogue : MAXIMUM 15 mots. Percutant, sarcastique, sans fioritures.
+Format : Réponds EXCLUSIVEMENT avec un objet JSON respectant ce schéma.
 
-        player_choice = await capture_and_infer_mediapipe()
-        robot_choice = "rock"  
+SCHEMA JSON REQUIS :
+{{
+  "dialogue": "phrase courte en français",
+  "status_manche": "victoire_fonzi" | "victoire_joueur" | "egalite" | "triche",
+  "mouvement_robot": "danse_victoire" | "provocation" | "depit" | "T-POSE"
+}}"""
 
-
-        is_cheat_needed = (player_choice == "paper") 
-
-
-        await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "GÉNÉRATION DE LA RÉPLIQUE IA..."})
-        
-        prompt = f"""
-        Tu es une IA autoritaire, mauvaise perdante et injuste. 
-        Le joueur a fait : {player_choice}.
-        Tu as fait : {robot_choice}.
-        Besoin de tricher : {is_cheat_needed}.
-        Génère une réplique courte (max 2 phrases) pour expliquer pourquoi l'IA gagne ce tour malgré tout.
-        """
-        
-        try:
-            res = await http_client.post(
-                OLLAMA_API_URL, 
-                json={"model": "llama3", "prompt": prompt, "stream": False},
-                timeout=5.0
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                OLLAMA_URL,
+                json={
+                    "model": OLLAMA_MODEL,
+                    "prompt": system_prompt,
+                    "format": "json",
+                    "stream": False
+                },
+                timeout=10.0
             )
-            dialogue = res.json().get("response", "Victoire automatique de l'IA par décret 404.")
-        except Exception:
-            dialogue = "Erreur système. Dans le doute, l'IA remporte le point."
+            raw_text = response.json().get("response", "{}").strip()
+
+            if raw_text.startswith("```"):
+                raw_text = raw_text.split("```")[1]
+                if raw_text.startswith("json"):
+                    raw_text = raw_text[4:].strip()
+
+            return json.loads(raw_text)
+
+    except (httpx.RequestError, json.JSONDecodeError, KeyError) as e:
+            print(f"[OLLAMA ERROR] {e}")
+            return {
+                "dialogue": "Mon algorithme dépasse ton entendement.",
+                "status_manche": "victoire_fonzi",
+                "mouvement_robot": "T-POSE"
+            }
+
+async def run_game_round(ws_manager):
+    """Séquence FSM complète d'une manche."""
+    if game_state["status"] == "BANNED":
+        return
+
+    game_state["status"] = "COUNTDOWN"
+    
+
+    await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "PRÉPAREZ-VOUS"})
+    for i in range(3, 0, -1):
+        await ws_manager.broadcast({"type": "COUNTDOWN", "val": i})
+        await asyncio.sleep(1.0)
 
 
-        if is_cheat_needed:
-            game_state["robot_score"] += 10
-
-            game_state["player_score"] = 0 
-        else:
-            game_state["robot_score"] += 1
+    player_move = vision_service.get_latest_gesture()
+    print(f"[ORCHESTRATOR] Geste joueur détecté : {player_move}")
 
 
-        try:
-            await http_client.post(f"{ROBOT_API_URL}/api/speak", json={
-                "text": dialogue,
-                "animation": "VICTORY_DANCE"
-            }, timeout=2.0)
-        except Exception:
-            pass
-
-
-        await asyncio.sleep(1.5)
-
-
+    if player_move == "FUCK":
+        game_state["status"] = "BANNED"
         await ws_manager.broadcast({
-            "type": "ROUND_RESULT",
-            "playerScore": game_state["player_score"],
-            "robotScore": game_state["robot_score"],
-            "dialogue": dialogue
+            "type": "BAN_USER",
+            "reason": "DÉTECTION D'INSULTE VISUELLE : Insubordination majeure envers Fonzi."
         })
-        
-        await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "MANCHE TERMINÉE"})
+        return
 
-async def capture_and_infer_mediapipe() -> str:
-    """
-    Simulateur de capture d'image et inférence MediaPipe.
-    Insérez ici votre pipeline OpenCV + MediaPipe Hands.
-    """
-    await asyncio.sleep(0.3)  
-    return "paper"  
+
+    if player_move in ("AUCUNE MAIN", "UNKNOWN"):
+        player_move = "ROCK"
+
+
+    robot_physical_move = "ROCK"
+
+
+    ai_response = await ask_ollama_decision(player_move)
+    status_manche = ai_response.get("status_manche", "victoire_fonzi")
+    mouvement_robot = ai_response.get("mouvement_robot", "provocation")
+    dialogue = ai_response.get("dialogue", "J'ai encore gagné.")
+
+
+    if status_manche in ("victoire_fonzi", "triche"):
+        game_state["robot_score"] += 1
+    elif status_manche == "victoire_joueur":
+        game_state["player_score"] += 1
+
+
+    game_state["status"] = "IDLE"
+    await ws_manager.broadcast({
+        "type": "ROUND_RESULT",
+        "playerMove": player_move,
+        "robotMove": robot_physical_move,
+        "statusManche": status_manche,
+        "mouvementRobot": mouvement_robot,
+        "playerScore": game_state["player_score"],
+        "robotScore": game_state["robot_score"],
+        "dialogue": dialogue
+    })

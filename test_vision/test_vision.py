@@ -136,60 +136,72 @@ def draw_landmarks_on_image(image: np.ndarray, landmarks: List[Any]) -> np.ndarr
 
     return image
 
+class VisionService:
+    def __init__(self, stream_url: str = STREAM_URL, model_path: str = MODEL_PATH):
+        self.stream_url = stream_url
+        self.model_path = model_path
+        self.running = False
+        self.current_gesture = "AUCUNE MAIN"
+        self.stabilizer = GestureStabilizer(window_size=7)
+        self._thread: Optional[threading.Thread] = None
 
-def main() -> None:
-    print(f"Chargement du modèle MediaPipe : {MODEL_PATH}")
-    base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-    options = vision.HandLandmarkerOptions(
-        base_options=base_options,
-        num_hands=1,
-        min_hand_detection_confidence=0.7,
-        min_hand_presence_confidence=0.5,
-        running_mode=vision.RunningMode.IMAGE
-    )
-    detector = vision.HandLandmarker.create_from_options(options)
+    def start(self):
+        self.running = True
+        self._thread = threading.Thread(target=self._run_detection, daemon=True)
+        self._thread.start()
 
-    print(f"Connexion au flux vidéo : {STREAM_URL}")
-    stream = FreshFrameReader(STREAM_URL)
-    stabilizer = GestureStabilizer(window_size=7)
+    def _run_detection(self):
+        base_options = python.BaseOptions(model_asset_path=self.model_path)
+        options = vision.HandLandmarkerOptions(
+            base_options=base_options,
+            num_hands=1,
+            min_hand_detection_confidence=0.7,
+            min_hand_presence_confidence=0.5,
+            running_mode=vision.RunningMode.IMAGE
+        )
+        detector = vision.HandLandmarker.create_from_options(options)
+        stream = FreshFrameReader(self.stream_url)
 
-    try:
-        while True:
-            ret, frame = stream.read()
-            if not ret or frame is None:
+        try:
+            while self.running:
+                ret, frame = stream.read()
+                if not ret or frame is None:
+                    time.sleep(0.01)
+                    continue
+
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                detection_result = detector.detect(mp_image)
+
+                raw_gesture = "AUCUNE MAIN"
+                if detection_result.hand_landmarks:
+                    landmarks = detection_result.hand_landmarks[0]
+                    raw_gesture = classify_gesture_advanced(landmarks)
+
+                self.current_gesture = self.stabilizer.update(raw_gesture)
                 time.sleep(0.01)
-                continue
+        finally:
+            detector.close()
+            stream.release()
 
-            # Conversion format MediaPipe
-            rgb_frame: np.ndarray = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image: mp.Image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+    def get_latest_gesture(self) -> str:
+        return self.current_gesture
 
-            detection_result = detector.detect(mp_image)
-
-            raw_gesture: str = "AUCUNE MAIN"
-            if detection_result.hand_landmarks:
-                landmarks = detection_result.hand_landmarks[0]
-                frame = draw_landmarks_on_image(frame, landmarks)
-                raw_gesture = classify_gesture_advanced(landmarks)
-
-            stable_gesture: str = stabilizer.update(raw_gesture)
-
-            # Interface
-            color: Tuple[int, int, int] = (0, 255, 0) if stable_gesture != "UNKNOWN" else (0, 0, 255)
-            cv2.putText(frame, f"Geste: {stable_gesture}", (20, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_AA)
-            cv2.putText(frame, f"Brut: {raw_gesture}", (20, 85),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
-
-            cv2.imshow("Detection Yanshee - PFC Avancee", frame)
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    finally:
-        detector.close()
-        stream.release()
-        cv2.destroyAllWindows()
-
+    def stop(self):
+        self.running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
 
 if __name__ == "__main__":
-    main()
+    print("Démarrage du test autonome du VisionService...")
+    service = VisionService()
+    service.start()
+    
+    try:
+        while True:
+            geste = service.get_latest_gesture()
+            print(f"[TEST VISION] Geste détecté en continu : {geste}")
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\nArrêt du service...")
+        service.stop()

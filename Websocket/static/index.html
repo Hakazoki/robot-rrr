@@ -19,28 +19,25 @@
         body { background: var(--bg); color: var(--text); font-family: var(--font); padding: 20px; display: flex; justify-content: center; }
         .container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 20px; }
         
-
         .status-card { background: var(--panel); border: 1px solid #242938; padding: 15px; border-radius: 6px; text-align: center; }
         #game-status { font-size: 1.4rem; color: var(--yellow); font-weight: bold; }
-
 
         .scoreboard { display: grid; grid-template-columns: 1fr auto 1fr; gap: 20px; background: var(--panel); border: 1px solid #242938; padding: 20px; border-radius: 6px; text-align: center; }
         .score { font-size: 3.5rem; font-weight: bold; }
         .player-score { color: var(--green); }
         .robot-score { color: var(--red); }
 
-
         #countdown-display { font-size: 5rem; color: var(--red); text-align: center; min-height: 80px; }
 
-
-        .history-box { background: #07080c; border-left: 4px solid var(--red); padding: 15px; height: 250px; overflow-y: auto; display: flex; flex-direction: column-reverse; gap: 10px; }
+        .history-box { background: #07080c; border-left: 4px solid var(--red); padding: 15px; height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
         .log-entry { font-size: 0.95rem; line-height: 1.4; border-bottom: 1px dashed #222; padding-bottom: 8px; }
         .log-time { color: #666; font-size: 0.8rem; }
-
+        .log-details { color: #888; font-size: 0.85rem; margin-top: 2px; }
 
         .controls { display: flex; justify-content: center; }
         .btn-start { background: var(--red); color: #000; font-weight: bold; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 4px; font-family: inherit; }
         .btn-start:hover { box-shadow: 0 0 15px var(--red); }
+        .btn-start:disabled { background: #444; cursor: not-allowed; box-shadow: none; }
     </style>
 </head>
 <body>
@@ -68,7 +65,7 @@
         </div>
 
         <div class="controls">
-            <button class="btn-start" onclick="triggerStart()">LANCER LA MANCHE</button>
+            <button id="btn-start" class="btn-start" onclick="triggerStart()">LANCER LA MANCHE</button>
         </div>
     </div>
 
@@ -79,6 +76,7 @@
         const elRobotScore = document.getElementById('robot-score');
         const elCountdown = document.getElementById('countdown-display');
         const elHistory = document.getElementById('history');
+        const btnStart = document.getElementById('btn-start');
 
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
@@ -89,32 +87,42 @@
                     break;
                     
                 case 'COUNTDOWN':
-                    elCountdown.textContent = msg.val > 0 ? msg.val : 'GO !';
-                    if(msg.val === 0) setTimeout(() => elCountdown.textContent = '', 1000);
+                    elCountdown.textContent = msg.val;
+                    if (msg.val === 1) {
+                        setTimeout(() => { elCountdown.textContent = ''; }, 1000);
+                    }
                     break;
 
                 case 'ROUND_RESULT':
                     elPlayerScore.textContent = msg.playerScore;
                     elRobotScore.textContent = msg.robotScore;
-                    addLogEntry(msg.dialogue);
+                    elStatus.textContent = `RÉSULTAT : ${msg.statusManche.toUpperCase()}`;
+                    btnStart.disabled = false;
+                    
+                    addLogEntry(msg.dialogue, `Joueur: ${msg.playerMove} | Fonzi: ${msg.robotMove} [${msg.statusManche}]`);
                     break;
 
-                case 'GAME_OVER':
+                case 'BAN_USER':
                     elStatus.textContent = "BANNISSEMENT SYSTÈME DÉCLENCHÉ";
+                    btnStart.disabled = true;
                     alert(msg.reason);
                     break;
             }
         };
 
-        function addLogEntry(text) {
+        function addLogEntry(dialogue, details) {
             const time = new Date().toLocaleTimeString();
             const entry = document.createElement('div');
             entry.className = 'log-entry';
-            entry.innerHTML = `<span class="log-time">[${time}] IA:</span> ${text}`;
+            entry.innerHTML = `
+                <div><span class="log-time">[${time}] Fonzi:</span> "${dialogue}"</div>
+                ${details ? `<div class="log-details">${details}</div>` : ''}
+            `;
             elHistory.prepend(entry);
         }
 
         function triggerStart() {
+            btnStart.disabled = true;
             ws.send(JSON.stringify({ type: 'START_ROUND' }));
         }
     </script>
