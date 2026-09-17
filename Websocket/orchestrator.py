@@ -3,7 +3,7 @@ import json
 import httpx
 from typing import Dict, Any
 from vision import VisionService
-from tts_service import speak_on_yanshee
+from tts_service import speak_on_yanshee, prepare_tts, trigger_play
 
 vision_service = VisionService()
 
@@ -96,20 +96,22 @@ SCHEMA JSON REQUIS :
         }
 
 async def run_game_round(ws_manager):
-    """Séquence FSM complète d'une manche."""
     if game_state["status"] == "BANNED":
         return
 
     game_state["status"] = "COUNTDOWN"
 
     try:
-
+        
         await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "PRÉPAREZ-VOUS"})
+        
+        await prepare_tts("T'es prêt ? Pierre ...... Feuille ..... Ciseaux !", filename="countdown.wav")
+
+        asyncio.create_task(trigger_play("countdown.wav"))
+
         for i in range(3, 0, -1):
-            if i == 3:
-                asyncio.create_task(speak_on_yanshee("T'es prêt ? Pierre ...... Feuille ..... Ciseaux !"))
             await ws_manager.broadcast({"type": "COUNTDOWN", "val": i})
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.2)
 
 
         player_move = vision_service.get_latest_gesture()
