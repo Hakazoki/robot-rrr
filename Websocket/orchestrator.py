@@ -60,7 +60,7 @@ SCHEMA JSON REQUIS :
                         {"role": "system", "content": "Tu es une IA qui réponds exclusivement en JSON validé."},
                         {"role": "user", "content": system_prompt}
                     ],
-                    "temperature": 0.7,
+                    "temperature": 1.2,
                     "response_format": {"type": "json_object"}
                 },
                 timeout=45.0 
@@ -106,6 +106,8 @@ async def run_game_round(ws_manager):
 
         await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "PRÉPAREZ-VOUS"})
         for i in range(3, 0, -1):
+            if i == 3:
+                asyncio.create_task(speak_on_yanshee("T'es prêt ? Pierre ...... Feuille ..... Ciseaux !"))
             await ws_manager.broadcast({"type": "COUNTDOWN", "val": i})
             await asyncio.sleep(1.0)
 
