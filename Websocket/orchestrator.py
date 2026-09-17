@@ -14,7 +14,11 @@ UNSLOTH_MODEL = "unsloth/Qwen3.5-9B-MTP-GGUF:Q3_K_S"
 game_state: Dict[str, Any] = {
     "player_score": 0,
     "robot_score": 0,
-    "status": "IDLE"  
+    "status": "IDLE",
+    "mode": "MENU",                 
+    "astro_step": 0,
+    "astro_answers": [],
+    "current_astro_question": ""
 }
 
 def reset_game() -> None:
@@ -200,3 +204,112 @@ async def run_game_round(ws_manager):
     finally:
         if game_state["status"] != "BANNED":
             game_state["status"] = "IDLE"
+
+TOTAL_ASTRO_QUESTIONS = 5
+
+async def ask_ollama_astro_question(qa_history: list) -> str:
+    """Demande au LLM de générer la question suivante."""
+    
+    history_text = "\n".join([f"- Q: {item['q']} | R: {item['a']}" for item in qa_history])
+    system_prompt = f"Génère une question absurde pour un test astrologique. Historique: {history_text}"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                UNSLOTH_URL,
+                json={
+                    "model": UNSLOTH_MODEL,
+                    "messages": [
+                        {"role": "system", "content": "Réponds uniquement en JSON avec la clé 'question'."},
+                        {"role": "user", "content": system_prompt}
+                    ],
+                    "temperature": 1.0,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=30.0
+            )
+            data = response.json()
+            raw_text = data["choices"][0]["message"]["content"].strip()
+            return json.loads(raw_text).get("question", "Question par défaut ?")
+    except Exception as e:
+        print(f"[ASTRO Q ERROR] {e}")
+        return "Préfères-tu les robots ou les humains ?"
+
+
+async def ask_ollama_astro_result(qa_history: list) -> Dict[str, Any]:
+    """Demande au LLM de calculer le signe astrologique inventé."""
+    # prompt final a mettre ici
+    return {
+        "signe": "Le Grille-Pain Quantique",
+        "dialogue": "Tes réponses indiquent une compatibilité totale avec les grille-pains.",
+        "mouvement_robot": "Danse2"
+    }
+
+
+async def start_astro_game(ws_manager):
+    """Initialise le jeu Astro Roboscope."""
+    game_state["mode"] = "ASTRO"
+    game_state["astro_step"] = 0
+    game_state["astro_answers"] = []
+    
+    await ws_manager.broadcast({"type": "GAME_STARTED", "game": "ASTRO"})
+    asyncio.create_task(speak_on_yanshee("Bienvenue dans l'Astro Roboscope !"))
+    await asyncio.sleep(2.5)
+    
+    await ask_next_astro_question(ws_manager)
+
+
+async def ask_next_astro_question(ws_manager):
+    step = game_state["astro_step"]
+    
+    if step < TOTAL_ASTRO_QUESTIONS:
+        await ws_manager.broadcast({"type": "ASTRO_ANALYZING", "message": "Fonzi prépare sa question..."})
+        
+        question = await ask_ollama_astro_question(game_state["astro_answers"])
+        game_state["current_astro_question"] = question
+        
+        await ws_manager.broadcast({
+            "type": "ASTRO_QUESTION",
+            "step": step + 1,
+            "total": TOTAL_ASTRO_QUESTIONS,
+            "question": question
+        })
+        
+        asyncio.create_task(speak_on_yanshee(question))
+        game_state["status"] = "WAITING_INPUT"
+    else:
+        await resolve_astro_game(ws_manager)
+
+
+async def process_astro_answer(user_text: str, ws_manager):
+    """Reçoit la réponse du joueur et passe à la question suivante."""
+    if game_state["mode"] != "ASTRO" or game_state["status"] != "WAITING_INPUT":
+        return
+
+    current_q = game_state.get("current_astro_question", "")
+    game_state["astro_answers"].append({"q": current_q, "a": user_text})
+    game_state["astro_step"] += 1
+    game_state["status"] = "RUNNING"
+    
+    await ask_next_astro_question(ws_manager)
+
+
+async def resolve_astro_game(ws_manager):
+    """Génère le bilan astrologique et l'annonce."""
+    await ws_manager.broadcast({"type": "ASTRO_ANALYZING", "message": "Consultation de l'Astro Roboscope en cours..."})
+    
+    result = await ask_ollama_astro_result(game_state["astro_answers"])
+    signe = result.get("signe", "Inconnu")
+    dialogue = result.get("dialogue", "Ton avenir est flou.")
+    mouvement = result.get("mouvement_robot", "T-POSE2")
+    
+    await ws_manager.broadcast({
+        "type": "ASTRO_RESULT",
+        "signe": signe,
+        "dialogue": dialogue
+    })
+    
+    await execute_reaction_sequence(f"D'après l'Astro Roboscope, ton signe est : {signe}. {dialogue}", mouvement)
+    
+    game_state["mode"] = "MENU"
+    game_state["status"] = "IDLE"

@@ -7,7 +7,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from orchestrator import run_game_round, vision_service
+from orchestrator import (
+    run_game_round, 
+    vision_service, 
+    start_astro_game, 
+    process_astro_answer, 
+    game_state
+)
 
 
 @asynccontextmanager
@@ -81,9 +87,32 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_json()
+            msg_type = data.get("type")
 
-            if data.get("type") == "START_ROUND":
-                asyncio.create_task(run_game_round(manager))
+
+            if msg_type == "SELECT_GAME":
+                selected = data.get("game")
+                if selected == "RPS":
+                    game_state["mode"] = "RPS"
+                    await manager.broadcast({"type": "GAME_SELECTED", "game": "RPS"})
+                elif selected == "ASTRO":
+                    await start_astro_game(manager)
+
+
+            elif msg_type == "START_ROUND":
+                if game_state["mode"] == "RPS":
+                    asyncio.create_task(run_game_round(manager))
+
+
+            elif msg_type == "SUBMIT_ASTRO_ANSWER":
+                user_answer = data.get("answer", "")
+                await process_astro_answer(user_answer, manager)
+
+
+            elif msg_type == "RETURN_TO_MENU":
+                game_state["mode"] = "MENU"
+                game_state["status"] = "IDLE"
+                await manager.broadcast({"type": "MENU_STATE"})
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
