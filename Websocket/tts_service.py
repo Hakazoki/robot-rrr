@@ -16,7 +16,7 @@ def _generate_local_tts(text: str, filepath: str) -> None:
 
     voices = engine.getProperty('voices')
     for voice in voices:
-        if 'Paul' in voice.name:
+        if 'Guillaume' in voice.name:
             engine.setProperty('voice', voice.id)
             break
 

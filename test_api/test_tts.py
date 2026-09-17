@@ -11,13 +11,13 @@ def generate_local_tts(text: str, filepath: str) -> None:
     """Génère le ficheir wav en local."""
     print(f"[*] Génération TTS : {filepath}")
     engine = pyttsx3.init()
-    engine.setProperty('rate', 320)
+    engine.setProperty('rate', 160)
     engine.setProperty('volume', 1.0)
     
     """Cherche une voix spécifique"""
     voices = engine.getProperty('voices')
     for voice in voices:
-        if 'Paul' in voice.name:
+        if 'Guillaume' in voice.name:
             engine.setProperty('voice', voice.id)
             break
             
