@@ -1,8 +1,9 @@
 import os
+import wave
+from typing import Dict
 import asyncio
 import pyttsx3
 import requests
-from typing import Dict
 
 ROBOT_IP: str = "192.168.0.150"
 API_URL: str = f"http://{ROBOT_IP}:9090/v1/media/music"
@@ -12,11 +13,13 @@ def _generate_local_tts(text: str, filepath: str) -> None:
     engine = pyttsx3.init()
     engine.setProperty('rate', 160)
     engine.setProperty('volume', 1.0)
+
     voices = engine.getProperty('voices')
     for voice in voices:
         if 'Guillaume' in voice.name:
             engine.setProperty('voice', voice.id)
             break
+
     engine.save_to_file(text, filepath)
     engine.runAndWait()
 
@@ -30,14 +33,20 @@ def _play_only_sync(filename: str) -> None:
     except Exception as e:
         print(f"[-] Erreur Réseau Lecture {filename} : {e}")
 
-
-def _upload_and_play_sync(text: str) -> None:
+def _upload_and_play_sync(text: str) -> float:
+    """Génère, upload, lance la lecture et retourne la durée exacte en secondes."""
     filepath = FILENAME
     try:
         _generate_local_tts(text, filepath)
         if not os.path.exists(filepath):
             print("[-] Erreur : Le fichier WAV n'a pas été généré.")
-            return
+            return 0.0
+
+        # Calcul exact de la durée audio
+        with wave.open(filepath, 'r') as f:
+            frames = f.getnframes()
+            rate = f.getframerate()
+            duration = frames / float(rate)
 
         with open(filepath, 'rb') as f:
             files = {'file': (os.path.basename(filepath), f, 'audio/wav')}
@@ -45,19 +54,21 @@ def _upload_and_play_sync(text: str) -> None:
 
         if not response.ok:
             print(f"[-] Échec Upload : HTTP {response.status_code}")
-            return
+            return duration
 
         payload: Dict[str, str] = {"name": os.path.basename(filepath), "operation": "start"}
         requests.put(API_URL, json=payload, timeout=5.0)
-        print("[+] TTS lu avec succès sur Yanshee.")
+        print(f"[+] TTS lu avec succès sur Yanshee. Durée: {duration:.2f}s")
+
+        return duration
 
     except Exception as e:
         print(f"[-] Erreur TTS Yanshee : {e}")
+        return 0.0
 
-
-async def speak_on_yanshee(text: str) -> None:
+async def speak_on_yanshee(text: str) -> float:
     """Exécute la génération et la lecture audio dans un thread non-bloquant."""
-    await asyncio.to_thread(_upload_and_play_sync, text)
+    return await asyncio.to_thread(_upload_and_play_sync, text)
 
 async def prepare_tts(text: str, filename: str = "countdown.wav") -> None:
     """Génère et upload le fichier WAV sans le lire."""
@@ -69,7 +80,6 @@ async def prepare_tts(text: str, filename: str = "countdown.wav") -> None:
                 requests.post(API_URL, files=files, timeout=10.0)
 
     await asyncio.to_thread(_prepare)
-
 
 async def trigger_play(filename: str) -> None:
     """Déclenche la lecture asynchrone d'un fichier pré-uploadé."""

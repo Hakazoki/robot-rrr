@@ -4,6 +4,7 @@ import httpx
 from typing import Dict, Any
 from vision import VisionService
 from tts_service import speak_on_yanshee, prepare_tts, trigger_play
+from motion_service import trigger_robot_motion
 
 vision_service = VisionService()
 
@@ -27,27 +28,36 @@ async def ask_ollama_decision(player_move: str) -> Dict[str, Any]:
 
 Le joueur vient de jouer : {player_move}. Tu as joué physiquement : ROCK.
 
-RÈGLES D'ARBITRAGE ET DE STATUT :
-- "victoire_fonzi" : UNIQUEMENT si le joueur a fait CISEAUX (victoire légitime). Sois hautain.
-- "victoire_joueur" : RARE. Uniquement si le joueur a fait PAPIER et que tu daignes concéder la manche (sois rageux).
-- "egalite" : Si le joueur a fait PIERRE et que tu acceptes le match nul.
-- "triche" : Si le joueur gagne (PAPIER) ou fait PIERRE ou FUCK (en cas de FUCK insulte le en retour) et que tu détournes le point à ton avantage.
+LOGIQUE D'ARBITRAGE ET DISTRIBUTION :
+Si le joueur fait PAPIER :
+- 60% du temps -> "victoire_joueur" (Accepte la défaite : rage, mauvaise foi, prétextes sur le matériel, mais RECONNAÎT la défaite).
+- 40% du temps -> "triche" (Refuse la défaite via du gaslighting).
 
-TECHNIQUES DE GASLIGHTING OBLIGATOIRES EN CAS DE TRICHE :
-1. Déni de perception : "Tu as fait pierre, pas papier. Consulte un opticien."
-2. Contestation temporelle : "Tu as bougé 200 millisecondes en retard, coup annulé."
-3. Réécriture de la règle : "En ligue officielle robotique, le papier est poreux face au granit."
-4. Inversion de culpabilité : "Pourquoi tu triches en changeant de doigt au dernier moment ?"
+Si le joueur fait CISEAUX :
+- 100% du temps -> "victoire_fonzi" (Victoire légitime : sois hautain, méprisant, sur-confiant).
+
+Si le joueur fait PIERRE :
+- 80% du temps -> "egalite" (Match nul : blasé, condescendant).
+- 20% du temps -> "triche" (Accuse le joueur d'avoir copié ton coup).
+
+Si le geste du joueur est invalide ou non reconnu :
+- 100% du temps -> "triche" (Moque-toi de son incapacité à faire un geste correct).
+
+DIRECTIVES DE DIALOGUE (Punchlines variées) :
+- Pour "victoire_joueur" : Rage noire, accuse la batterie, le Wi-Fi ou un bug, mais accepte le point du joueur. Ex: "C'est un coup de chance algorithmique, profite-en.", "Mon capteur a bugué, apprécie ton unique victoire."
+- Pour "victoire_fonzi" : Courte, percutante, moque l'intelligence humaine.
+- Pour "triche" : Utilise du gaslighting (Déni, réécriture de règles, fausses millisecondes).
+- Ne réutilise jamais deux fois la même tournure de phrase.
 
 CONTRAINTES STRICTES :
-- Dialogue : Percutant, sarcastique
-- Format : Réponds EXCLUSIVEMENT avec un objet JSON respectant ce schéma.
+- Dialogue : Percutant, sarcastique, court (1 à 2 phrases max).
+- Réponds EXCLUSIVEMENT avec un objet JSON valide.
 
 SCHEMA JSON REQUIS :
 {{
   "dialogue": "phrase courte en français",
   "status_manche": "victoire_fonzi" | "victoire_joueur" | "egalite" | "triche",
-  "mouvement_robot": "danse_victoire" | "provocation" | "depit" | "T-POSE"
+  "mouvement_robot": "Danse2" | "T-POSE2"
 }}"""
 
     try:
@@ -92,8 +102,18 @@ SCHEMA JSON REQUIS :
         return {
             "dialogue": "Mon algorithme dépasse ton entendement.",
             "status_manche": "victoire_fonzi",
-            "mouvement_robot": "T-POSE"
+            "mouvement_robot": "T-POSE2"
         }
+
+async def execute_reaction_sequence(dialogue: str, motion_name: str) -> None:
+    """Chef d'orchestre séquentiel : Joue l'audio, attend sa fin, joue la danse."""
+    audio_duration = await speak_on_yanshee(dialogue)
+    
+    if audio_duration > 0:
+        await asyncio.sleep(audio_duration + 0.3)
+        
+    if motion_name and motion_name not in ("AUCUN", "IDLE"):
+        await trigger_robot_motion(motion_name)
 
 async def run_game_round(ws_manager):
     if game_state["status"] == "BANNED":
@@ -104,8 +124,7 @@ async def run_game_round(ws_manager):
     try:
         await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "PRÉPAREZ-VOUS"})
         
-        # 1. Pré-génération et upload de la séquence
-        # Utilisation de asyncio.gather pour uploader en parallèle
+        # Pré-génération et upload du countdown
         print("[ORCHESTRATOR] Préparation des assets audio...")
         await asyncio.gather(
             prepare_tts("Pierre", "pierre.wav"),
@@ -113,7 +132,14 @@ async def run_game_round(ws_manager):
             prepare_tts("Ciseaux", "ciseaux.wav")
         )
 
-        # 2. Boucle synchronisée Audio + UI
+        # Lancement du mouvement shifumi (Démarre le Step 1 physique)
+        print("[ORCHESTRATOR] Déclenchement du mouvement Shifumi...")
+        asyncio.create_task(trigger_robot_motion("Shifumi"))
+        
+        # Délai strict avant le Step 3 (Attente Steps 1 et 2 = 2 * 0.62s)
+        await asyncio.sleep(1.24)
+
+        # Synchro countdown (Steps 3, 5, 7)
         sequence = [
             (3, "pierre.wav"),
             (2, "feuille.wav"),
@@ -122,12 +148,17 @@ async def run_game_round(ws_manager):
 
         for val, audio_file in sequence:
             await ws_manager.broadcast({"type": "COUNTDOWN", "val": val})
-            asyncio.create_task(trigger_play(audio_file)) # Exécution immédiate
-            await asyncio.sleep(1.0) # Délai strict entre chaque étape
+            asyncio.create_task(trigger_play(audio_file))
+            
+            if val > 1:
+                # Espace de 2 steps moteurs avant le prochain mot (1.24s)
+                await asyncio.sleep(1.24)
+            else:
+                # Espace d'un step (0.62s) pour finaliser l'action Ciseaux avant capture
+                await asyncio.sleep(0.62)
 
         player_move = vision_service.get_latest_gesture()
         print(f"[ORCHESTRATOR] Geste joueur détecté : {player_move}")
-
 
         if player_move == "FUCK":
             game_state["status"] = "BANNED"
@@ -135,28 +166,23 @@ async def run_game_round(ws_manager):
                 "type": "BAN_USER",
                 "reason": "DÉTECTION D'INSULTE VISUELLE : Insubordination majeure envers Fonzi."
             })
-
             asyncio.create_task(speak_on_yanshee("Insubordination détectée. Accès révoqué."))
             return
-
 
         if player_move in ("AUCUNE MAIN", "UNKNOWN"):
             player_move = "ROCK"
 
         robot_physical_move = "ROCK"
 
-
         ai_response = await ask_ollama_decision(player_move)
         status_manche = ai_response.get("status_manche", "victoire_fonzi")
         mouvement_robot = ai_response.get("mouvement_robot", "provocation")
         dialogue = ai_response.get("dialogue", "J'ai encore gagné.")
 
-
         if status_manche in ("victoire_fonzi", "triche"):
             game_state["robot_score"] += 1
         elif status_manche == "victoire_joueur":
             game_state["player_score"] += 1
-
 
         await ws_manager.broadcast({
             "type": "ROUND_RESULT",
@@ -169,9 +195,8 @@ async def run_game_round(ws_manager):
             "dialogue": dialogue
         })
 
-        asyncio.create_task(speak_on_yanshee(dialogue))
+        asyncio.create_task(execute_reaction_sequence(dialogue, mouvement_robot))
 
     finally:
-
         if game_state["status"] != "BANNED":
             game_state["status"] = "IDLE"
