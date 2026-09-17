@@ -3,6 +3,7 @@ import json
 import httpx
 from typing import Dict, Any
 from vision import VisionService
+from tts_service import speak_on_yanshee
 
 vision_service = VisionService()
 
@@ -119,6 +120,8 @@ async def run_game_round(ws_manager):
                 "type": "BAN_USER",
                 "reason": "DÉTECTION D'INSULTE VISUELLE : Insubordination majeure envers Fonzi."
             })
+
+            asyncio.create_task(speak_on_yanshee("Insubordination détectée. Accès révoqué."))
             return
 
 
@@ -150,6 +153,8 @@ async def run_game_round(ws_manager):
             "robotScore": game_state["robot_score"],
             "dialogue": dialogue
         })
+
+        asyncio.create_task(speak_on_yanshee(dialogue))
 
     finally:
 
