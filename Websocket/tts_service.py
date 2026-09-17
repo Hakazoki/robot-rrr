@@ -51,3 +51,18 @@ def _upload_and_play_sync(text: str) -> None:
 async def speak_on_yanshee(text: str) -> None:
     """Exécute la génération et la lecture audio dans un thread non-bloquant."""
     await asyncio.to_thread(_upload_and_play_sync, text)
+
+async def prepare_tts(text: str, filename: str = "countdown.wav") -> None:
+    """Génère et upload le fichier WAV sans le lire."""
+    def _prepare():
+        _generate_local_tts(text, filename)
+        if os.path.exists(filename):
+            with open(filename, 'rb') as f:
+                files = {'file': (os.path.basename(filename), f, 'audio/wav')}
+                requests.post(API_URL, files=files, timeout=10.0)
+
+    await asyncio.to_thread(_prepare)
+
+
+async def trigger_play(filename: str = "countdown.wav") -> None:
+    await asyncio.to_thread(play_on_yanshee, filename)
