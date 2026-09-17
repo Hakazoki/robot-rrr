@@ -1,27 +1,34 @@
 import os
-from typing import Dict
 import asyncio
 import pyttsx3
 import requests
+from typing import Dict
 
 ROBOT_IP: str = "192.168.0.150"
 API_URL: str = f"http://{ROBOT_IP}:9090/v1/media/music"
 FILENAME: str = "fonzi_dialogue.wav"
 
-
 def _generate_local_tts(text: str, filepath: str) -> None:
     engine = pyttsx3.init()
     engine.setProperty('rate', 160)
     engine.setProperty('volume', 1.0)
-
     voices = engine.getProperty('voices')
     for voice in voices:
         if 'Guillaume' in voice.name:
             engine.setProperty('voice', voice.id)
             break
-
     engine.save_to_file(text, filepath)
     engine.runAndWait()
+
+def _play_only_sync(filename: str) -> None:
+    """Exploite l'API PUT pour lire un fichier déjà présent sur le robot."""
+    payload: Dict[str, str] = {"name": os.path.basename(filename), "operation": "start"}
+    try:
+        response = requests.put(API_URL, json=payload, timeout=5.0)
+        if not response.ok:
+            print(f"[-] Échec Lecture {filename} : HTTP {response.status_code}")
+    except Exception as e:
+        print(f"[-] Erreur Réseau Lecture {filename} : {e}")
 
 
 def _upload_and_play_sync(text: str) -> None:
@@ -64,5 +71,6 @@ async def prepare_tts(text: str, filename: str = "countdown.wav") -> None:
     await asyncio.to_thread(_prepare)
 
 
-async def trigger_play(filename: str = "countdown.wav") -> None:
-    await asyncio.to_thread(play_on_yanshee, filename)
+async def trigger_play(filename: str) -> None:
+    """Déclenche la lecture asynchrone d'un fichier pré-uploadé."""
+    await asyncio.to_thread(_play_only_sync, filename)

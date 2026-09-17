@@ -102,17 +102,28 @@ async def run_game_round(ws_manager):
     game_state["status"] = "COUNTDOWN"
 
     try:
-        
         await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "PRÉPAREZ-VOUS"})
         
-        await prepare_tts("T'es prêt ? Pierre ...... Feuille ..... Ciseaux !", filename="countdown.wav")
+        # 1. Pré-génération et upload de la séquence
+        # Utilisation de asyncio.gather pour uploader en parallèle
+        print("[ORCHESTRATOR] Préparation des assets audio...")
+        await asyncio.gather(
+            prepare_tts("Pierre", "pierre.wav"),
+            prepare_tts("Feuille", "feuille.wav"),
+            prepare_tts("Ciseaux", "ciseaux.wav")
+        )
 
-        asyncio.create_task(trigger_play("countdown.wav"))
+        # 2. Boucle synchronisée Audio + UI
+        sequence = [
+            (3, "pierre.wav"),
+            (2, "feuille.wav"),
+            (1, "ciseaux.wav")
+        ]
 
-        for i in range(3, 0, -1):
-            await ws_manager.broadcast({"type": "COUNTDOWN", "val": i})
-            await asyncio.sleep(1.2)
-
+        for val, audio_file in sequence:
+            await ws_manager.broadcast({"type": "COUNTDOWN", "val": val})
+            asyncio.create_task(trigger_play(audio_file)) # Exécution immédiate
+            await asyncio.sleep(1.0) # Délai strict entre chaque étape
 
         player_move = vision_service.get_latest_gesture()
         print(f"[ORCHESTRATOR] Geste joueur détecté : {player_move}")
