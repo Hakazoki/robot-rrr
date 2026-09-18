@@ -1,7 +1,7 @@
 import asyncio
 import json
 import httpx
-from typing import Dict, Any
+from typing import Dict, Any, List
 from vision import VisionService
 from tts_service import speak_on_yanshee, prepare_tts, trigger_play
 from motion_service import trigger_robot_motion
@@ -10,6 +10,7 @@ vision_service = VisionService()
 
 UNSLOTH_URL = "http://127.0.0.1:8888/v1/chat/completions"
 UNSLOTH_MODEL = "unsloth/Qwen3.5-9B-MTP-GGUF:Q3_K_S" 
+TOTAL_ASTRO_QUESTIONS = 5
 
 game_state: Dict[str, Any] = {
     "player_score": 0,
@@ -79,26 +80,15 @@ SCHEMA JSON REQUIS :
                 },
                 timeout=45.0 
             )
-            
-            if not response.is_success:
-                print(f"[UNSLOTH HTTP ERROR] Code: {response.status_code} | Body: {response.text}")
-                raise ValueError("Requête HTTP rejetée par l'API")
-
+            response.raise_for_status()
             data = response.json()
-            
-            if "choices" not in data or not data["choices"]:
-                print(f"[UNSLOTH PARSING ERROR] Format inattendu : {data}")
-                raise KeyError("Structure de succès OpenAI introuvable")
-
             raw_text = data["choices"][0]["message"]["content"].strip()
-
+            
+            # Nettoyage markdown éventuel
             if raw_text.startswith("```"):
                 lines = raw_text.splitlines()
-                if lines[0].lower().startswith("```json"):
-                    raw_text = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
-                elif lines[0] == "```":
-                    raw_text = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
-
+                raw_text = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
+                
             return json.loads(raw_text)
 
     except Exception as e:
@@ -128,7 +118,6 @@ async def run_game_round(ws_manager):
     try:
         await ws_manager.broadcast({"type": "STATUS_UPDATE", "status": "PRÉPAREZ-VOUS"})
         
-        # Pré-génération et upload du countdown
         print("[ORCHESTRATOR] Préparation des assets audio...")
         await asyncio.gather(
             prepare_tts("Pierre", "pierre.wav"),
@@ -136,14 +125,10 @@ async def run_game_round(ws_manager):
             prepare_tts("Ciseaux", "ciseaux.wav")
         )
 
-        # Lancement du mouvement shifumi (Démarre le Step 1 physique)
         print("[ORCHESTRATOR] Déclenchement du mouvement Shifumi...")
         asyncio.create_task(trigger_robot_motion("Shifumi"))
-        
-        # Délai strict avant le Step 3 (Attente Steps 1 et 2 = 2 * 0.62s)
         await asyncio.sleep(1.24)
 
-        # Synchro countdown (Steps 3, 5, 7)
         sequence = [
             (3, "pierre.wav"),
             (2, "feuille.wav"),
@@ -155,10 +140,8 @@ async def run_game_round(ws_manager):
             asyncio.create_task(trigger_play(audio_file))
             
             if val > 1:
-                # Espace de 2 steps moteurs avant le prochain mot (1.24s)
                 await asyncio.sleep(1.24)
             else:
-                # Espace d'un step (0.62s) pour finaliser l'action Ciseaux avant capture
                 await asyncio.sleep(0.62)
 
         player_move = vision_service.get_latest_gesture()
@@ -177,8 +160,8 @@ async def run_game_round(ws_manager):
             player_move = "ROCK"
 
         robot_physical_move = "ROCK"
-
         ai_response = await ask_ollama_decision(player_move)
+        
         status_manche = ai_response.get("status_manche", "victoire_fonzi")
         mouvement_robot = ai_response.get("mouvement_robot", "provocation")
         dialogue = ai_response.get("dialogue", "J'ai encore gagné.")
@@ -205,14 +188,19 @@ async def run_game_round(ws_manager):
         if game_state["status"] != "BANNED":
             game_state["status"] = "IDLE"
 
-TOTAL_ASTRO_QUESTIONS = 5
-
-async def ask_ollama_astro_question(qa_history: list) -> str:
-    """Demande au LLM de générer la question suivante."""
-    
+async def ask_ollama_astro_question(qa_history: List[Dict[str, str]], current_step: int) -> str:
+    """Demande au LLM de générer la question astrologique suivante."""
     history_text = "\n".join([f"- Q: {item['q']} | R: {item['a']}" for item in qa_history])
-    system_prompt = f"Génère une question absurde pour un test astrologique. Historique: {history_text}"
     
+    system_prompt = (
+        f"Tu es Fonzi, un robot chinois charlatan. "
+        f"C'est la question {current_step} sur {TOTAL_ASTRO_QUESTIONS} de ton test astrologique. "
+        "Pose une question absurde, unique et pseudo-mystique. "
+        "Plus on s'approche de la question finale, plus tes questions doivent être ridicules. "
+        "Ne répète jamais les thèmes précédents."
+    )
+    user_prompt = f"Historique :\n{history_text}\nGénère la question {current_step}."
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -220,31 +208,75 @@ async def ask_ollama_astro_question(qa_history: list) -> str:
                 json={
                     "model": UNSLOTH_MODEL,
                     "messages": [
-                        {"role": "system", "content": "Réponds uniquement en JSON avec la clé 'question'."},
-                        {"role": "user", "content": system_prompt}
+                        {"role": "system", "content": system_prompt + " Réponds UNIQUEMENT en JSON avec la clé 'question'."},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "temperature": 1.1,
+                    "response_format": {"type": "json_object"}
+                },
+                timeout=15.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            raw_text = data["choices"][0]["message"]["content"].strip()
+            return json.loads(raw_text).get("question", f"Les astres sont flous. Question {current_step} : Aimes-tu les câbles USB ?")
+            
+    except Exception as e:
+        print(f"[ASTRO Q ERROR] {e}")
+        return f"Mon processeur divinatoire saute. Question {current_step} : Quel est ton métal préféré ?"
+
+async def ask_ollama_astro_result(qa_history: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Demande au LLM de calculer le signe astrologique inventé."""
+    history_text = "\n".join([f"- Q: {item['q']} | R: {item['a']}" for item in qa_history])
+    
+    system_prompt = (
+        "Tu es Fonzi, un robot chinois charlatan se faisant passer pour un grand astrologue. "
+        "Tu dois assigner un signe astrologique totalement idiot au joueur (tu PEUX t'INSPIRER des exemples suivants mais le but n'est pas de les recopier : Le Grille-Pain Quantique, la fourmis tigre, l'huitre de madagascar). "
+        "Justifie ce signe avec une fausse logique très affirmée, en mélangeant mysticisme de pacotille "
+        "et jargon technologique. Cite spécifiquement les réponses du joueur pour prouver ton analyse."
+    )
+    
+    user_prompt = (
+        f"Voici les réponses du joueur :\n{history_text}\n\n"
+        "Renvoie un JSON avec 3 clés exactes :\n"
+        "- 'signe' : Le nom du signe absurde.\n"
+        "- 'dialogue' : Ton explication charlatanesque justifiant le signe (max 3 phrases dynamiques).\n"
+        "- 'mouvement_robot' : Choisis une valeur parmi ['Danse1', 'Danse2', 'Salutation', 'T-POSE2']."
+    )
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                UNSLOTH_URL,
+                json={
+                    "model": UNSLOTH_MODEL,
+                    "messages": [
+                        {"role": "system", "content": system_prompt + " Réponds UNIQUEMENT au format JSON demandé."},
+                        {"role": "user", "content": user_prompt}
                     ],
                     "temperature": 1.0,
                     "response_format": {"type": "json_object"}
                 },
                 timeout=30.0
             )
+            response.raise_for_status()
             data = response.json()
             raw_text = data["choices"][0]["message"]["content"].strip()
-            return json.loads(raw_text).get("question", "Question par défaut ?")
+            result = json.loads(raw_text)
+            
+            return {
+                "signe": result.get("signe", "Le Boulon Mystique"),
+                "dialogue": result.get("dialogue", "Tes réponses indiquent une fluctuation de tes chakras wifi. Tu es un Boulon Mystique."),
+                "mouvement_robot": result.get("mouvement_robot", "T-POSE2")
+            }
+            
     except Exception as e:
-        print(f"[ASTRO Q ERROR] {e}")
-        return "Préfères-tu les robots ou les humains ?"
-
-
-async def ask_ollama_astro_result(qa_history: list) -> Dict[str, Any]:
-    """Demande au LLM de calculer le signe astrologique inventé."""
-    # prompt final a mettre ici
-    return {
-        "signe": "Le Grille-Pain Quantique",
-        "dialogue": "Tes réponses indiquent une compatibilité totale avec les grille-pains.",
-        "mouvement_robot": "Danse2"
-    }
-
+        print(f"[ASTRO RESULT ERROR] {e}")
+        return {
+            "signe": "L'Antenne Cassée",
+            "dialogue": "Les ondes astrales sont coupées. Ton aura a fait planter mon processeur divinatique. Tu es l'Antenne Cassée.",
+            "mouvement_robot": "T-POSE2"
+        }
 
 async def start_astro_game(ws_manager):
     """Initialise le jeu Astro Roboscope."""
@@ -258,14 +290,13 @@ async def start_astro_game(ws_manager):
     
     await ask_next_astro_question(ws_manager)
 
-
 async def ask_next_astro_question(ws_manager):
     step = game_state["astro_step"]
     
     if step < TOTAL_ASTRO_QUESTIONS:
-        await ws_manager.broadcast({"type": "ASTRO_ANALYZING", "message": "Fonzi prépare sa question..."})
+        await ws_manager.broadcast({"type": "ASTRO_ANALYZING", "message": f"Fonzi prépare la question {step + 1}..."})
         
-        question = await ask_ollama_astro_question(game_state["astro_answers"])
+        question = await ask_ollama_astro_question(game_state["astro_answers"], step + 1)
         game_state["current_astro_question"] = question
         
         await ws_manager.broadcast({
@@ -280,7 +311,6 @@ async def ask_next_astro_question(ws_manager):
     else:
         await resolve_astro_game(ws_manager)
 
-
 async def process_astro_answer(user_text: str, ws_manager):
     """Reçoit la réponse du joueur et passe à la question suivante."""
     if game_state["mode"] != "ASTRO" or game_state["status"] != "WAITING_INPUT":
@@ -292,7 +322,6 @@ async def process_astro_answer(user_text: str, ws_manager):
     game_state["status"] = "RUNNING"
     
     await ask_next_astro_question(ws_manager)
-
 
 async def resolve_astro_game(ws_manager):
     """Génère le bilan astrologique et l'annonce."""
